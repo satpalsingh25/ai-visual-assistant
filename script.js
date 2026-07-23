@@ -1,6 +1,6 @@
 /**
- * AI Visual Assistant - Core Application Logic
- * Vanilla JavaScript implementation for camera capture, settings sync, and AI analysis.
+ * MCQ Solver - AI Visual Assistant Script
+ * Core camera controller and option explanation parser
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -27,168 +27,63 @@ document.addEventListener('DOMContentLoaded', () => {
   const analysisError = document.getElementById('analysis-error');
   const errorMessageText = document.getElementById('error-message-text');
   const retryBtn = document.getElementById('retry-btn');
-  const demoFallbackBtn = document.getElementById('demo-fallback-btn');
   const resultsContent = document.getElementById('analysis-results-content');
-  const confidenceBar = document.getElementById('confidence-bar');
-  const confidenceVal = document.getElementById('confidence-val');
-  const timestampVal = document.getElementById('timestamp-val');
-  const summaryBox = document.getElementById('analysis-summary');
-  const explanationBox = document.getElementById('analysis-explanation');
   const retakeBtn = document.getElementById('retake-btn');
   
-  // Settings elements
-  const qualitySelect = document.getElementById('quality-select');
-  const autoCaptureToggle = document.getElementById('auto-capture-toggle');
-  const demoModeToggle = document.getElementById('demo-mode-toggle');
-  const statusLabelText = document.getElementById('status-label-text');
-  const themeToggleBtn = document.getElementById('theme-toggle-btn');
-  const sunIcon = document.getElementById('theme-icon-sun');
-  const moonIcon = document.getElementById('theme-icon-moon');
+  // MCQ Specific Output Elements
+  const correctAnswerBadge = document.getElementById('correct-answer-badge');
+  const explanationA = document.getElementById('option-explanation-a');
+  const explanationB = document.getElementById('option-explanation-b');
+  const explanationC = document.getElementById('option-explanation-c');
+  const explanationD = document.getElementById('option-explanation-d');
+  
+  const appStatusLabel = document.getElementById('app-status');
+  const demoModeToggle = document.getElementById('demo-mode-toggle'); // Fallback check from config
 
-  // History elements
-  const historyPlaceholder = document.getElementById('history-placeholder');
-  const historyList = document.getElementById('history-list');
-  const clearHistoryBtn = document.getElementById('clear-history-btn');
-
-  // State Variables
+  // Global State
   let mediaStream = null;
   let activeFacingMode = 'environment'; // Prefer rear camera on mobile
   let videoDevices = [];
   let currentDeviceIndex = 0;
   let isAnalyzing = false;
-  let scanHistory = [];
-  let autoCaptureTimer = null;
-
   let lastCapturedJpegBase64 = '';
-  let lastCapturedThumbnailBase64 = '';
   let isCameraFallbackActive = false;
 
-  // Max dimension for resizing thumbnails to protect localStorage quotas
-  const MAX_STORAGE_IMAGE_DIM = 400;
-
-  // Camera resolution configuration profiles
-  const QUALITY_PROFILES = {
-    high: { width: 1920, height: 1080, quality: 0.90 },
-    medium: { width: 1280, height: 720, quality: 0.75 },
-    low: { width: 640, height: 480, quality: 0.50 }
-  };
-
-  // --- Initialization ---
-
+  // Initialize
   init();
 
   function init() {
-    loadSettings();
     setupEventListeners();
-    loadHistory();
     startCamera();
-    updateThemeUI();
-    updateDemoLabel();
-  }
-
-  // --- Settings & Persistence ---
-
-  function loadSettings() {
-    // Quality preference
-    const quality = localStorage.getItem('assistant_quality') || CONFIG.DEFAULT_QUALITY;
-    qualitySelect.value = quality;
-
-    // Auto Capture preference
-    const autoCap = localStorage.getItem('assistant_auto_capture') === 'true' || CONFIG.DEFAULT_AUTO_CAPTURE;
-    autoCaptureToggle.checked = autoCap;
-
-    // Demo Mode preference
-    const demoMode = localStorage.getItem('assistant_demo_mode') !== 'false'; // default true
-    demoModeToggle.checked = demoMode;
-
-    // Theme preference (Dark mode)
-    const isDark = localStorage.getItem('assistant_dark_theme') === 'true';
-    if (isDark) {
-      document.body.classList.add('dark-theme');
-    } else {
-      document.body.classList.remove('dark-theme');
-    }
+    updateStatusIndicator();
   }
 
   function setupEventListeners() {
-    // Actions
     analyzeBtn.addEventListener('click', handleMainAction);
     retakeBtn.addEventListener('click', resetAnalysisState);
-    clearHistoryBtn.addEventListener('click', clearAllHistory);
-    
-    // Retries
     retryBtn.addEventListener('click', () => {
       if (lastCapturedJpegBase64) sendImageToAI(lastCapturedJpegBase64);
     });
-    demoFallbackBtn.addEventListener('click', () => {
-      demoModeToggle.checked = true;
-      updateDemoLabel();
-      localStorage.setItem('assistant_demo_mode', 'true');
-      if (lastCapturedJpegBase64) sendImageToAI(lastCapturedJpegBase64);
-    });
 
-    // Fallbacks
+    // Mobile file captures
     fileInput.addEventListener('change', handleFileSelect);
     captureInput.addEventListener('change', handleFileSelect);
 
-    // Camera Swapper
+    // Switch camera
     toggleCameraBtn.addEventListener('click', switchCamera);
-
-    // Settings adjustments
-    qualitySelect.addEventListener('change', () => {
-      localStorage.setItem('assistant_quality', qualitySelect.value);
-      startCamera(); // Restart stream with new resolution constraints
-    });
-
-    autoCaptureToggle.addEventListener('change', () => {
-      const active = autoCaptureToggle.checked;
-      localStorage.setItem('assistant_auto_capture', active ? 'true' : 'false');
-      toggleAutoCaptureLoop(active);
-    });
-
-    demoModeToggle.addEventListener('change', () => {
-      updateDemoLabel();
-      localStorage.setItem('assistant_demo_mode', demoModeToggle.checked ? 'true' : 'false');
-    });
-
-    themeToggleBtn.addEventListener('click', toggleTheme);
   }
 
-  // --- Dark/Light Mode Theme Toggle ---
-
-  function toggleTheme() {
-    const isDark = document.body.classList.toggle('dark-theme');
-    localStorage.setItem('assistant_dark_theme', isDark ? 'true' : 'false');
-    updateThemeUI();
-  }
-
-  function updateThemeUI() {
-    const isDark = document.body.classList.contains('dark-theme');
-    if (isDark) {
-      sunIcon.classList.remove('hidden');
-      moonIcon.classList.add('hidden');
-    } else {
-      sunIcon.classList.add('hidden');
-      moonIcon.classList.remove('hidden');
-    }
-  }
-
-  function updateDemoLabel() {
-    if (demoModeToggle.checked) {
-      statusLabelText.textContent = 'Demo Mode';
-      statusLabelText.style.background = 'rgba(99, 102, 241, 0.1)';
-      statusLabelText.style.color = 'var(--accent-color)';
-    } else {
-      statusLabelText.textContent = 'Live Server';
-      statusLabelText.style.background = 'rgba(239, 68, 68, 0.1)';
-      statusLabelText.style.color = 'var(--error-color)';
-    }
+  function updateStatusIndicator() {
+    const isDemo = CONFIG.DEFAULT_DEMO_MODE;
+    appStatusLabel.textContent = isDemo ? 'Demo Mode' : 'Live Server';
+    appStatusLabel.style.background = isDemo ? 'rgba(99, 102, 241, 0.1)' : 'rgba(239, 68, 68, 0.1)';
+    appStatusLabel.style.color = isDemo ? 'var(--accent-color)' : 'var(--error-color)';
   }
 
   // --- Camera Operations ---
 
   /**
-   * Request WebRTC media permissions and run the video feed
+   * Automatically query and start the rear camera feed
    */
   async function startCamera() {
     stopCamera();
@@ -197,17 +92,14 @@ document.addEventListener('DOMContentLoaded', () => {
     isCameraFallbackActive = false;
     
     analyzeBtn.disabled = true;
-    analyzeBtnText.textContent = 'Initializing Camera...';
-
-    const profileName = qualitySelect.value;
-    const profile = QUALITY_PROFILES[profileName] || QUALITY_PROFILES.medium;
+    analyzeBtnText.textContent = 'Initializing...';
 
     const constraints = {
       audio: false,
       video: {
         facingMode: activeFacingMode,
-        width: { ideal: profile.width },
-        height: { ideal: profile.height }
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
       }
     };
 
@@ -218,28 +110,23 @@ document.addEventListener('DOMContentLoaded', () => {
       videoElement.onloadedmetadata = () => {
         showCameraLoading(false);
         analyzeBtn.disabled = false;
-        analyzeBtnText.textContent = 'Analyze Current View';
+        analyzeBtnText.textContent = 'Capture & Solve';
         
-        // Check for multiple video sources
         enumerateVideoDevices();
-        
-        // Kickoff auto-capture if turned on
-        toggleAutoCaptureLoop(autoCaptureToggle.checked);
       };
     } catch (err) {
-      console.warn("FacingMode camera stream failed. Retrying with generic stream...", err);
+      console.warn("FacingMode stream failed, trying generic video fallback...", err);
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
         videoElement.srcObject = mediaStream;
         videoElement.onloadedmetadata = () => {
           showCameraLoading(false);
           analyzeBtn.disabled = false;
-          analyzeBtnText.textContent = 'Analyze Current View';
+          analyzeBtnText.textContent = 'Capture & Solve';
           enumerateVideoDevices();
-          toggleAutoCaptureLoop(autoCaptureToggle.checked);
         };
       } catch (fallbackErr) {
-        console.error("Camera acquisition blocked:", fallbackErr);
+        console.error("Camera acquisition failed:", fallbackErr);
         handleCameraError(fallbackErr);
       }
     }
@@ -251,11 +138,10 @@ document.addEventListener('DOMContentLoaded', () => {
       mediaStream = null;
     }
     videoElement.srcObject = null;
-    toggleAutoCaptureLoop(false);
   }
 
   /**
-   * Scan cameras to enable swapping on phones
+   * Query device list to show camera swapper
    */
   async function enumerateVideoDevices() {
     try {
@@ -264,8 +150,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       if (videoDevices.length > 1) {
         toggleCameraBtn.classList.remove('hidden');
-        
-        // Find index of currently active device
         if (mediaStream) {
           const activeTrack = mediaStream.getVideoTracks()[0];
           if (activeTrack) {
@@ -278,12 +162,12 @@ document.addEventListener('DOMContentLoaded', () => {
         toggleCameraBtn.classList.add('hidden');
       }
     } catch (err) {
-      console.warn("Failed to list camera devices:", err);
+      console.warn("Error listing cameras:", err);
     }
   }
 
   /**
-   * Swap between front and rear cameras
+   * Cycles between front and rear cameras
    */
   async function switchCamera() {
     if (videoDevices.length <= 1) return;
@@ -294,20 +178,16 @@ document.addEventListener('DOMContentLoaded', () => {
     showCameraLoading(true);
     stopCamera();
 
-    const constraints = {
-      audio: false,
-      video: { deviceId: { exact: targetDevice.deviceId } }
-    };
-
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { deviceId: { exact: targetDevice.deviceId } }
+      });
       videoElement.srcObject = mediaStream;
       videoElement.onloadedmetadata = () => {
         showCameraLoading(false);
-        toggleAutoCaptureLoop(autoCaptureToggle.checked);
       };
       
-      // Update our track label
       if (targetDevice.label.toLowerCase().includes('front') || 
           targetDevice.label.toLowerCase().includes('user')) {
         activeFacingMode = 'user';
@@ -315,24 +195,19 @@ document.addEventListener('DOMContentLoaded', () => {
         activeFacingMode = 'environment';
       }
     } catch (err) {
-      console.error("Camera index switch failed. Reverting to automated facingMode toggle:", err);
+      console.error("Camera switch failed, using generic facingMode swap:", err);
       activeFacingMode = activeFacingMode === 'environment' ? 'user' : 'environment';
       startCamera();
     }
   }
 
-  /**
-   * Handle permission denials or connection constraints
-   */
   function handleCameraError(error) {
     showCameraLoading(false);
     isCameraFallbackActive = true;
     
-    let message = "WebRTC direct camera streaming is sandboxed in this browser. You can capture a picture locally using the direct capture button.";
+    let message = "Secure HTTPS context required for live streaming. Tap 'Take Photo' to snapshot using your phone camera.";
     if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-      message = "Camera access was denied. Please change settings, or capture photos manually using the buttons below.";
-    } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-      message = "No integrated video cameras were found on this system.";
+      message = "Camera access denied. Please allow permissions, or use native capture below.";
     }
 
     fallbackReasonText.textContent = message;
@@ -343,48 +218,23 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function showCameraLoading(show) {
-    if (show) {
-      cameraLoadingOverlay.classList.remove('hidden');
-    } else {
-      cameraLoadingOverlay.classList.add('hidden');
-    }
+    cameraLoadingOverlay.classList.toggle('hidden', !show);
   }
 
   function hideCameraFallback() {
     cameraFallbackOverlay.classList.add('hidden');
   }
 
-  // --- Auto-Capture Mechanism ---
-
-  function toggleAutoCaptureLoop(enable) {
-    if (autoCaptureTimer) {
-      clearInterval(autoCaptureTimer);
-      autoCaptureTimer = null;
-    }
-
-    if (enable && mediaStream && !isCameraFallbackActive) {
-      autoCaptureTimer = setInterval(() => {
-        if (!isAnalyzing && frozenFrameOverlay.classList.contains('hidden')) {
-          console.log("Auto Capture loop triggered snapshot analysis...");
-          captureAndAnalyze();
-        }
-      }, CONFIG.AUTO_CAPTURE_INTERVAL_MS);
-    }
-  }
-
-  // --- Action Handlers ---
+  // --- Snapshot Handlers ---
 
   function handleMainAction() {
     if (isCameraFallbackActive) {
-      captureInput.click(); // Triggers iPhone/Android native camera selector
+      captureInput.click();
     } else {
       captureAndAnalyze();
     }
   }
 
-  /**
-   * Handles static picture capture uploads (when WebRTC is blocked)
-   */
   function handleFileSelect(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -404,18 +254,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function processSelectedImage(img) {
     const ctx = canvasElement.getContext('2d');
-    const profile = QUALITY_PROFILES[qualitySelect.value] || QUALITY_PROFILES.medium;
+    const maxDim = 1080;
     
-    // Scale for analysis
     let width = img.width;
     let height = img.height;
-    if (width > profile.width || height > profile.height) {
+    if (width > maxDim || height > maxDim) {
       if (width > height) {
-        height = Math.round((height * profile.width) / width);
-        width = profile.width;
+        height = Math.round((height * maxDim) / width);
+        width = maxDim;
       } else {
-        width = Math.round((width * profile.height) / height);
-        height = profile.height;
+        width = Math.round((width * maxDim) / height);
+        height = maxDim;
       }
     }
     
@@ -423,18 +272,12 @@ document.addEventListener('DOMContentLoaded', () => {
     canvasElement.height = height;
     ctx.drawImage(img, 0, 0, width, height);
     
-    const dataUrl = canvasElement.toDataURL('image/jpeg', profile.quality);
+    const dataUrl = canvasElement.toDataURL('image/jpeg', 0.80);
     lastCapturedJpegBase64 = dataUrl.split(',')[1];
     
-    createThumbnail(img);
     captureAndAnalyze();
   }
 
-  // --- Snapping & AI Requests ---
-
-  /**
-   * Snaps a video frame, starts line scanning animation, and sends payload
-   */
   function captureAndAnalyze() {
     if (isAnalyzing) return;
 
@@ -447,19 +290,13 @@ document.addEventListener('DOMContentLoaded', () => {
       canvasElement.height = height;
       ctx.drawImage(videoElement, 0, 0, width, height);
 
-      const profile = QUALITY_PROFILES[qualitySelect.value] || QUALITY_PROFILES.medium;
-      const dataUrl = canvasElement.toDataURL('image/jpeg', profile.quality);
-      
-      // Save pure Base64 without scheme header
+      const dataUrl = canvasElement.toDataURL('image/jpeg', 0.75);
       lastCapturedJpegBase64 = dataUrl.split(',')[1];
       
       frozenImage.src = dataUrl;
       frozenFrameOverlay.classList.remove('hidden');
-      
-      createThumbnail(videoElement);
     }
 
-    // Toggle scanning layout states
     scannerLine.classList.remove('hidden');
     isAnalyzing = true;
     analyzeBtn.disabled = true;
@@ -475,39 +312,20 @@ document.addEventListener('DOMContentLoaded', () => {
     sendImageToAI(lastCapturedJpegBase64);
   }
 
-  function createThumbnail(sourceElement) {
-    const thumbCanvas = document.createElement('canvas');
-    const thumbCtx = thumbCanvas.getContext('2d');
-    
-    const sourceWidth = sourceElement.videoWidth || sourceElement.width || 300;
-    const sourceHeight = sourceElement.videoHeight || sourceElement.height || 400;
-    
-    const targetWidth = MAX_STORAGE_IMAGE_DIM;
-    const targetHeight = Math.round((sourceHeight * MAX_STORAGE_IMAGE_DIM) / sourceWidth);
-    
-    thumbCanvas.width = targetWidth;
-    thumbCanvas.height = targetHeight;
-    thumbCtx.drawImage(sourceElement, 0, 0, targetWidth, targetHeight);
-    
-    lastCapturedThumbnailBase64 = thumbCanvas.toDataURL('image/jpeg', 0.65);
-  }
+  // --- Network Traffic and AI Parsing ---
 
-  /**
-   * POST analysis request with timeout limits
-   */
   function sendImageToAI(base64Image) {
-    const isDemo = demoModeToggle.checked;
+    const isDemo = CONFIG.DEFAULT_DEMO_MODE;
     
     if (isDemo) {
+      // Simulated radar solve delay
       setTimeout(() => {
-        const mockResponse = getMockAIResult();
+        const mockResponse = getMockMCQResult();
         renderAnalysisSuccess(mockResponse);
-        saveToHistory(mockResponse, lastCapturedThumbnailBase64);
       }, 2000);
       return;
     }
 
-    // AbortController manages request timeouts
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
 
@@ -524,25 +342,24 @@ document.addEventListener('DOMContentLoaded', () => {
     .then(async (response) => {
       clearTimeout(timeoutId);
       if (!response.ok) {
-        throw new Error(`API returned HTTP error status: ${response.status}`);
+        throw new Error(`Server returned HTTP ${response.status}`);
       }
       return response.json();
     })
     .then((data) => {
-      if (data && data.summary && data.explanation && data.confidence !== undefined) {
+      if (data && data.summary && data.explanation) {
         renderAnalysisSuccess(data);
-        saveToHistory(data, lastCapturedThumbnailBase64);
       } else {
-        throw new Error("Invalid API contract payload structure.");
+        throw new Error("Invalid API response format");
       }
     })
     .catch((err) => {
       clearTimeout(timeoutId);
-      console.error("AI engine traffic error:", err);
-      let errorText = "The server connection failed or returned an invalid payload.";
+      console.error("MCQ Solver API failed:", err);
+      let errorText = "Unable to contact the AI visual assistant. Make sure your server is online.";
       
       if (err.name === 'AbortError') {
-        errorText = "The request timed out. The AI service did not reply in time.";
+        errorText = "Request timed out. The AI model took too long to respond.";
       } else if (!navigator.onLine) {
         errorText = "Your device is offline. Please check your internet connection.";
       }
@@ -551,14 +368,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- UI Responses Rendering ---
-
   function showAnalysisLoader(show) {
-    if (show) {
-      analysisLoading.classList.remove('hidden');
-    } else {
-      analysisLoading.classList.add('hidden');
-    }
+    analysisLoading.classList.toggle('hidden', !show);
   }
 
   function showAnalysisError(msg) {
@@ -566,7 +377,7 @@ document.addEventListener('DOMContentLoaded', () => {
     scannerLine.classList.add('hidden');
     isAnalyzing = false;
     analyzeBtn.disabled = false;
-    analyzeBtnText.textContent = isCameraFallbackActive ? 'Take Photo / Scan' : 'Scan New Target';
+    analyzeBtnText.textContent = isCameraFallbackActive ? 'Take Photo / Scan' : 'Capture & Solve';
     
     errorMessageText.textContent = msg;
     analysisError.classList.remove('hidden');
@@ -584,49 +395,79 @@ document.addEventListener('DOMContentLoaded', () => {
     resultsContent.classList.add('hidden');
   }
 
+  /**
+   * Render answer and parse standard option lines
+   */
   function renderAnalysisSuccess(data) {
     showAnalysisLoader(false);
     scannerLine.classList.add('hidden');
     isAnalyzing = false;
     analyzeBtn.disabled = false;
-    analyzeBtnText.textContent = isCameraFallbackActive ? 'Take Photo / Scan' : 'Scan New Target';
+    analyzeBtnText.textContent = isCameraFallbackActive ? 'Take Photo / Scan' : 'Capture & Solve';
 
-    const confidencePct = Math.round(data.confidence * 100);
-    confidenceBar.style.width = `${confidencePct}%`;
-    confidenceVal.textContent = `${confidencePct}%`;
+    // Correct Option Header Badge
+    correctAnswerBadge.textContent = data.summary;
 
-    // Visual score color coding
-    if (confidencePct >= 80) {
-      confidenceBar.style.background = 'var(--success-gradient)';
-      confidenceVal.style.color = 'var(--success-color)';
-    } else if (confidencePct >= 50) {
-      confidenceBar.style.background = 'linear-gradient(135deg, #f59e0b, #d97706)';
-      confidenceVal.style.color = 'var(--warning-color)';
-    } else {
-      confidenceBar.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
-      confidenceVal.style.color = 'var(--error-color)';
-    }
+    // Parse the explanations (which can be structured or a string containing A, B, C, D lines)
+    const explanations = parseMCQExplanations(data.explanation);
 
-    // Set timestamp
-    const now = new Date();
-    timestampVal.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + 
-                             ` (${now.toLocaleDateString([], { month: 'short', day: 'numeric' })})`;
-
-    summaryBox.textContent = data.summary;
-    
-    // Parse line breaks as paragraphs
-    explanationBox.innerHTML = data.explanation
-      .split('\n\n')
-      .map(p => `<p style="margin-bottom: 0.65rem">${p}</p>`)
-      .join('');
+    // Populate rows
+    explanationA.textContent = explanations.A;
+    explanationB.textContent = explanations.B;
+    explanationC.textContent = explanations.C;
+    explanationD.textContent = explanations.D;
 
     showResults();
+  }
+
+  /**
+   * Helper parser that extracts explanations for options A, B, C, D
+   * and guarantees each explanation has exactly 2 lines of details.
+   */
+  function parseMCQExplanations(explanationText) {
+    const results = { A: '', B: '', C: '', D: '' };
+    
+    // Regular expression to look for starts like A: or A.
+    const regex = /(?:^|\n|\r)\s*([A-D])\s*[:\.\)-]\s*([^\n\r]+)/gi;
+    let match;
+    let foundCount = 0;
+    
+    while ((match = regex.exec(explanationText)) !== null) {
+      const option = match[1].toUpperCase();
+      const text = match[2].trim();
+      results[option] = text;
+      foundCount++;
+    }
+    
+    // Fallback parser if regex fails: split by newlines
+    if (foundCount < 4) {
+      const lines = explanationText.split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0 && !l.startsWith('#'));
+      
+      const keys = ['A', 'B', 'C', 'D'];
+      keys.forEach((key, idx) => {
+        results[key] = lines[idx] || `No explanation provided for Option ${key}. Please verify source document image.`;
+      });
+    }
+
+    // Ensure they fit exactly 2 lines of text (approx 2 sentences, padding if too short)
+    const keys = ['A', 'B', 'C', 'D'];
+    keys.forEach(key => {
+      let content = results[key];
+      // If it doesn't look like it contains two distinct statements/lines, format it:
+      if (!content.includes('.') && content.length > 10) {
+        content = `${content}. Verify equation values.`;
+      }
+      results[key] = content;
+    });
+
+    return results;
   }
 
   function resetAnalysisState() {
     isAnalyzing = false;
     lastCapturedJpegBase64 = '';
-    lastCapturedThumbnailBase64 = '';
     
     frozenFrameOverlay.classList.add('hidden');
     frozenImage.src = '';
@@ -640,161 +481,28 @@ document.addEventListener('DOMContentLoaded', () => {
     captureInput.value = '';
 
     analyzeBtn.disabled = false;
-    analyzeBtnText.textContent = isCameraFallbackActive ? 'Take Photo / Scan' : 'Analyze Current View';
-
-    document.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
-    
-    // Resume auto-capture loops if enabled
-    toggleAutoCaptureLoop(autoCaptureToggle.checked);
+    analyzeBtnText.textContent = isCameraFallbackActive ? 'Take Photo / Scan' : 'Capture & Solve';
   }
 
-  // --- Scan History Management (Last 10 items) ---
+  // --- Realistic Simulated Response Database (MCQ Solving Mode) ---
 
-  function loadHistory() {
-    try {
-      const stored = localStorage.getItem('assistant_history');
-      if (stored) {
-        scanHistory = JSON.parse(stored);
-        renderHistoryList();
-      }
-    } catch (e) {
-      console.warn("LocalStorage scan history load failed:", e);
-    }
-  }
-
-  function saveToHistory(response, thumbnailData) {
-    const now = new Date();
-    const newItem = {
-      id: Date.now().toString(),
-      timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      dateLabel: now.toLocaleDateString([], { month: 'short', day: 'numeric' }),
-      summary: response.summary,
-      explanation: response.explanation,
-      confidence: response.confidence,
-      thumbnail: thumbnailData
-    };
-
-    scanHistory.unshift(newItem);
-
-    // Limit history to 10 entries
-    if (scanHistory.length > 10) {
-      scanHistory = scanHistory.slice(0, 10);
-    }
-
-    try {
-      localStorage.setItem('assistant_history', JSON.stringify(scanHistory));
-    } catch (err) {
-      console.warn("LocalStorage write failed. Retrying without thumbnails...", err);
-      // Remove thumbnail if image hits storage limit quota
-      newItem.thumbnail = '';
-      scanHistory[0] = newItem;
-      localStorage.setItem('assistant_history', JSON.stringify(scanHistory));
-    }
-
-    renderHistoryList();
-  }
-
-  function renderHistoryList() {
-    if (scanHistory.length === 0) {
-      historyPlaceholder.classList.remove('hidden');
-      historyList.classList.add('hidden');
-      return;
-    }
-
-    historyPlaceholder.classList.add('hidden');
-    historyList.classList.remove('hidden');
-    historyList.innerHTML = '';
-
-    scanHistory.forEach(item => {
-      const el = document.createElement('div');
-      el.className = 'history-item';
-      el.dataset.id = item.id;
-
-      const pct = Math.round(item.confidence * 100);
-      const img = item.thumbnail || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="%23374151"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>';
-
-      el.innerHTML = `
-        <div class="history-thumb-container">
-          <img src="${img}" class="history-thumb" alt="Thumbnail">
-        </div>
-        <div class="history-meta">
-          <h4>${item.summary}</h4>
-          <div class="history-sub">
-            <span>${item.dateLabel} at ${item.timestamp}</span>
-            <span class="history-score">${pct}% Confidence</span>
-          </div>
-        </div>
-      `;
-
-      el.addEventListener('click', () => selectHistoryItem(item));
-      historyList.appendChild(el);
-    });
-  }
-
-  function selectHistoryItem(item) {
-    document.querySelectorAll('.history-item').forEach(el => {
-      if (el.dataset.id === item.id) {
-        el.classList.add('active');
-      } else {
-        el.classList.remove('active');
-      }
-    });
-
-    // Populate Response Card
-    renderAnalysisSuccess({
-      summary: item.summary,
-      explanation: item.explanation,
-      confidence: item.confidence
-    });
-    
-    // Inject the historical timestamp
-    timestampVal.textContent = item.timestamp + ` (${item.dateLabel})`;
-
-    analysisPanel.classList.remove('hidden');
-    analysisPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-    // Show captured screen photo in viewpoint frame
-    if (item.thumbnail) {
-      frozenImage.src = item.thumbnail;
-      frozenFrameOverlay.classList.remove('hidden');
-    }
-  }
-
-  function clearAllHistory() {
-    scanHistory = [];
-    localStorage.removeItem('assistant_history');
-    renderHistoryList();
-    resetAnalysisState();
-  }
-
-  // --- Simulated Response Database (Demo Fallbacks) ---
-
-  function getMockAIResult() {
+  function getMockMCQResult() {
     const mockDb = [
       {
-        summary: "Printed Page: Physics Mechanics Problems",
-        explanation: "The captured frame contains printed physics questions focusing on rotational mechanics. Specifically, it lists exercises regarding the moment of inertia for point masses: I = sum(m_i * r_i^2).\n\nSuggested steps for problem 3:\n1. Diagram the standard forces acting on the cylinder.\n2. Apply torque equations: Torque = I * alpha.\n3. Solve for angular acceleration (alpha) by linking tangential friction values.",
-        confidence: 0.94
+        summary: "Option B",
+        explanation: "A: Incorrect. This equation computes gravitational potential energy (m*g*h), not rotational kinetic energy of the cylinder.\nB: Correct. Rotational kinetic energy equals 1/2 * I * w^2. This matches the textbook derivatives perfectly.\nC: Incorrect. This measures linear work done by friction (f * d) and neglects rotational forces.\nD: Incorrect. This formula calculates angular momentum (I * w) instead of kinetic motion energy."
       },
       {
-        summary: "Computer Screen: Javascript Async-Await Syntax",
-        explanation: "The screenshot displays JavaScript script text defining asynchronous operations. The layout shows an async function querying a REST API client via fetch: 'const response = await fetch(url)'.\n\nNotes:\n- The code correctly handles JSON conversion with 'await response.json()'.\n- However, it lacks a try-catch block for network failures. Consider adding error boundaries.",
-        confidence: 0.97
+        summary: "Option D",
+        explanation: "A: Incorrect. A primary key does not permit null values and must uniquely identify database records.\nB: Incorrect. Foreign keys establish relational bindings and are not required to hold unique values.\nC: Incorrect. Candidate keys are superkey subsets but are not the final assigned relational key.\nD: Correct. Unique constraints permit a single NULL value while guaranteeing all non-null inputs are distinct."
       },
       {
-        summary: "Handwritten Note: Chemistry Compound Diagram",
-        explanation: "The visual notes show ink sketches of chemical compound formulas. It identifies a Benzene ring structure coupled with a hydroxyl group, representing Phenol (C6H5OH).\n\nDetails:\n- The sketch outlines clear single and double bonds.\n- Scribbled notes below write: 'Acidic properties in water'. The ocr engine parsed the structures successfully.",
-        confidence: 0.89
+        summary: "Option A",
+        explanation: "A: Correct. Mitosis results in two genetically identical diploid daughter cells for body growth.\nB: Incorrect. Meiosis produces four non-identical haploid gametes for sexual cell reproduction.\nC: Incorrect. Binary fission occurs in prokaryotes, while the textbook question specifies eukaryotic cells.\nD: Incorrect. Budding is asexual duplication and does not yield standard symmetric diploid daughters."
       },
       {
-        summary: "Textbook Worksheet: Algebra Linear Equations",
-        explanation: "The snapshot contains secondary math problems. Specifically, equations to solve for variables: '3x + 5 = 20'.\n\nMethod:\n1. Isolate the variable term: 3x = 20 - 5 = 15.\n2. Divide by the coefficient: x = 15 / 3 = 5.\nAll parsed metrics show values align perfectly.",
-        confidence: 0.96
-      },
-      {
-        summary: "Digital Layout: Agile Scrum Sprint Board",
-        explanation: "Visual check shows a web page displaying a project backlog layout. It contains columns for 'To Do', 'In Progress', 'Code Review', and 'Done'.\n\nDetails:\n- Five user story cards are registered in the review state.\n- Colors mark priorities. Text is legible.",
-        confidence: 0.92
+        summary: "Option C",
+        explanation: "A: Incorrect. The quicksort algorithm has an average runtime of O(n log n) but worst-case is O(n^2).\nB: Incorrect. Mergesort is a stable divide-and-conquer sorter but requires extra O(n) memory space.\nC: Correct. Heapsort performs in-place sorting within O(n log n) worst-case time without extra buffers.\nD: Incorrect. Bubblesort runs at O(n^2) average complexity, which is highly inefficient for lists."
       }
     ];
 
