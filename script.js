@@ -312,13 +312,82 @@ document.addEventListener('DOMContentLoaded', () => {
     sendImageToAI(lastCapturedJpegBase64);
   }
 
-  // --- Network Traffic and AI Parsing ---
+  // --- Network Traffic, Database Matching and AI Parsing ---
+
+  /**
+   * Cleans text and tokenizes it into words longer than 3 characters
+   */
+  function cleanAndTokenize(text) {
+    if (!text) return [];
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(word => word.length > 3);
+  }
+
+  /**
+   * Search local MCQ_DATA array using Jaccard token overlap similarity.
+   * If similarity matches > 55%, resolves to the database question.
+   */
+  function findLocalMCQMatch(aiSummary, aiExplanation) {
+    if (typeof MCQ_DATA === 'undefined' || !MCQ_DATA || MCQ_DATA.length === 0) {
+      return null;
+    }
+
+    const aiText = `${aiSummary} ${aiExplanation}`;
+    const aiTokens = cleanAndTokenize(aiText);
+    if (aiTokens.length === 0) return null;
+
+    let bestMatch = null;
+    let highestScore = 0;
+
+    for (const unit of MCQ_DATA) {
+      for (const q of unit.questions) {
+        const qTokens = cleanAndTokenize(q.question);
+        if (qTokens.length === 0) continue;
+
+        let matchCount = 0;
+        qTokens.forEach(token => {
+          if (aiTokens.includes(token)) matchCount++;
+        });
+
+        const score = matchCount / qTokens.length;
+        if (score > highestScore) {
+          highestScore = score;
+          bestMatch = q;
+        }
+      }
+    }
+
+    // High confidence match threshold (55% of question keywords must match)
+    return highestScore > 0.55 ? bestMatch : null;
+  }
+
+  /**
+   * Map a database question into a structured 2-line explanation layout
+   */
+  function getFormattedDBResult(matchedQuestion) {
+    const correctLetter = matchedQuestion.answer.toLowerCase();
+    
+    const formatExp = (letter, text) => {
+      if (letter === correctLetter) {
+        return `Correct. ${text}.\nThis is the official correct option in the cybersecurity legal compliance bank.`;
+      } else {
+        return `Incorrect. ${text}.\nThis option does not match the official correct answer key.`;
+      }
+    };
+
+    return {
+      summary: `Option ${correctLetter.toUpperCase()}`,
+      explanation: `A: ${formatExp('a', matchedQuestion.options.a)}\nB: ${formatExp('b', matchedQuestion.options.b)}\nC: ${formatExp('c', matchedQuestion.options.c)}\nD: ${formatExp('d', matchedQuestion.options.d)}`
+    };
+  }
 
   function sendImageToAI(base64Image) {
     const isDemo = CONFIG.DEFAULT_DEMO_MODE;
     
     if (isDemo) {
-      // Simulated radar solve delay
       setTimeout(() => {
         const mockResponse = getMockMCQResult();
         renderAnalysisSuccess(mockResponse);
@@ -348,7 +417,16 @@ document.addEventListener('DOMContentLoaded', () => {
     })
     .then((data) => {
       if (data && data.summary && data.explanation) {
-        renderAnalysisSuccess(data);
+        // PRIORITIZE DATABASE: Attempt to match AI text against local 200 questions database
+        const localMatch = findLocalMCQMatch(data.summary, data.explanation);
+        if (localMatch) {
+          console.log("Fuzzy matched scanned question to database:", localMatch.question);
+          const resolvedDbResult = getFormattedDBResult(localMatch);
+          renderAnalysisSuccess(resolvedDbResult);
+        } else {
+          // If not in database, fallback to AI directly
+          renderAnalysisSuccess(data);
+        }
       } else {
         throw new Error("Invalid API response format");
       }
@@ -484,29 +562,23 @@ document.addEventListener('DOMContentLoaded', () => {
     analyzeBtnText.textContent = isCameraFallbackActive ? 'Take Photo / Scan' : 'Capture & Solve';
   }
 
-  // --- Realistic Simulated Response Database (MCQ Solving Mode) ---
+  // --- Simulated Response Database (MCQ Solving Mode using Local DB) ---
 
   function getMockMCQResult() {
-    const mockDb = [
-      {
-        summary: "Option B",
-        explanation: "A: Incorrect. This equation computes gravitational potential energy (m*g*h), not rotational kinetic energy of the cylinder.\nB: Correct. Rotational kinetic energy equals 1/2 * I * w^2. This matches the textbook derivatives perfectly.\nC: Incorrect. This measures linear work done by friction (f * d) and neglects rotational forces.\nD: Incorrect. This formula calculates angular momentum (I * w) instead of kinetic motion energy."
-      },
-      {
-        summary: "Option D",
-        explanation: "A: Incorrect. A primary key does not permit null values and must uniquely identify database records.\nB: Incorrect. Foreign keys establish relational bindings and are not required to hold unique values.\nC: Incorrect. Candidate keys are superkey subsets but are not the final assigned relational key.\nD: Correct. Unique constraints permit a single NULL value while guaranteeing all non-null inputs are distinct."
-      },
-      {
-        summary: "Option A",
-        explanation: "A: Correct. Mitosis results in two genetically identical diploid daughter cells for body growth.\nB: Incorrect. Meiosis produces four non-identical haploid gametes for sexual cell reproduction.\nC: Incorrect. Binary fission occurs in prokaryotes, while the textbook question specifies eukaryotic cells.\nD: Incorrect. Budding is asexual duplication and does not yield standard symmetric diploid daughters."
-      },
-      {
-        summary: "Option C",
-        explanation: "A: Incorrect. The quicksort algorithm has an average runtime of O(n log n) but worst-case is O(n^2).\nB: Incorrect. Mergesort is a stable divide-and-conquer sorter but requires extra O(n) memory space.\nC: Correct. Heapsort performs in-place sorting within O(n log n) worst-case time without extra buffers.\nD: Incorrect. Bubblesort runs at O(n^2) average complexity, which is highly inefficient for lists."
-      }
-    ];
+    if (typeof MCQ_DATA !== 'undefined' && MCQ_DATA && MCQ_DATA.length > 0) {
+      // Pick a random unit from local database bank
+      const unit = MCQ_DATA[Math.floor(Math.random() * MCQ_DATA.length)];
+      // Pick a random question
+      const question = unit.questions[Math.floor(Math.random() * unit.questions.length)];
+      
+      console.log("Simulating solve for database question:", question.question);
+      return getFormattedDBResult(question);
+    }
 
-    const idx = Math.floor(Math.random() * mockDb.length);
-    return mockDb[idx];
+    // Hardcoded fallback if db.js load failed
+    return {
+      summary: "Option B",
+      explanation: "A: Incorrect. This equation computes gravitational potential energy.\nB: Correct. Rotational kinetic energy equals 1/2 * I * w^2.\nC: Incorrect. This measures linear work.\nD: Incorrect. This describes angular velocity."
+    };
   }
 });
